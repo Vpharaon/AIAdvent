@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,9 +16,12 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,12 +30,18 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arkivanov.mvikotlin.core.store.StoreFactory
@@ -43,6 +53,8 @@ import com.farionik.aiadvent.data.network.ApiClient
 import com.farionik.aiadvent.data.repository.ChatRepositoryImpl
 import com.farionik.aiadvent.domain.model.ChatMessage
 import com.farionik.aiadvent.domain.usecase.SendMessageUseCase
+import com.farionik.aiadvent.domain.usecase.GetCountryInfoUseCase
+import com.farionik.aiadvent.domain.usecase.ValidateCountryNameUseCase
 import com.farionik.aiadvent.presentation.mvi.ChatStore
 import com.farionik.aiadvent.presentation.mvi.ChatStoreFactory
 import com.farionik.aiadvent.presentation.theme.AIAdventTheme
@@ -51,10 +63,14 @@ class MainActivity : ComponentActivity() {
     private val apiClient = ApiClient()
     private val repository = ChatRepositoryImpl(apiClient)
     private val sendMessageUseCase = SendMessageUseCase(repository)
+    private val getCountryInfoUseCase = GetCountryInfoUseCase(repository)
+    private val validateCountryNameUseCase = ValidateCountryNameUseCase(repository)
     private val storeFactory: StoreFactory = DefaultStoreFactory()
     private val store: ChatStore = ChatStoreFactory(
         storeFactory,
         sendMessageUseCase,
+        getCountryInfoUseCase,
+        validateCountryNameUseCase,
         BuildConfig.API_KEY
     ).create()
 
@@ -112,59 +128,69 @@ fun ChatScreen(
     Column(
         modifier = modifier.fillMaxSize()
     ) {
-        // Список сообщений
-        LazyColumn(
-            state = listState,
+        // Список сообщений с приятным фоном
+        Box(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .fillMaxWidth()
+                .background(Color(0xFFE3F2FD)) // Светло-голубой фон для чата
         ) {
-            items(state.messages) { message ->
-                ChatMessageItem(message = message)
-            }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(state.messages) { message ->
+                    ChatMessageItem(message = message)
+                }
 
-            // Индикатор загрузки
-            if (state.isLoading) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.padding(8.dp)
-                        )
+                // Индикатор загрузки
+                if (state.isLoading) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Поле ввода и кнопка отправки внизу
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Поле ввода и кнопка отправки с отдельным фоном
+        Surface(
+            shadowElevation = 8.dp,
+            color = Color.White
         ) {
-            OutlinedTextField(
-                value = state.inputText,
-                onValueChange = { onIntent(ChatStore.Intent.UpdateInputText(it)) },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Введите сообщение...") },
-                enabled = !state.isLoading,
-                maxLines = 3
-            )
-
-            IconButton(
-                onClick = { onIntent(ChatStore.Intent.SendMessage(state.inputText)) },
-                enabled = state.inputText.isNotBlank() && !state.isLoading
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Отправить"
+                OutlinedTextField(
+                    value = state.inputText,
+                    onValueChange = { onIntent(ChatStore.Intent.UpdateInputText(it)) },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Введите сообщение...") },
+                    enabled = !state.isLoading,
+                    maxLines = 3
                 )
+
+                IconButton(
+                    onClick = { onIntent(ChatStore.Intent.GetCountryInfo(state.inputText)) },
+                    enabled = state.inputText.isNotBlank() && !state.isLoading
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Отправить"
+                    )
+                }
             }
         }
     }
@@ -172,6 +198,8 @@ fun ChatScreen(
 
 @Composable
 fun ChatMessageItem(message: ChatMessage) {
+    var showJsonDialog by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
@@ -187,23 +215,58 @@ fun ChatMessageItem(message: ChatMessage) {
             ),
             colors = CardDefaults.cardColors(
                 containerColor = if (message.isUser) {
-                    MaterialTheme.colorScheme.primaryContainer
+                    Color(0xFF4A90E2) // Приятный синий для пользователя
                 } else {
-                    MaterialTheme.colorScheme.secondaryContainer
+                    Color(0xFFF5F5F5) // Светло-серый фон для AI
                 }
             )
         ) {
-            Text(
-                text = message.text,
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (message.isUser) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSecondaryContainer
+            Column(
+                modifier = Modifier.padding(12.dp)
+            ) {
+                Text(
+                    text = message.text,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (message.isUser) {
+                        Color.White // Белый текст на синем фоне
+                    } else {
+                        Color(0xFF212121) // Почти черный текст для читаемости
+                    }
+                )
+
+                // Кнопка просмотра JSON (только для сообщений с rawJson)
+                if (!message.isUser && message.rawJson != null) {
+                    TextButton(
+                        onClick = { showJsonDialog = true },
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text("{ } Посмотреть JSON")
+                    }
                 }
-            )
+            }
         }
+    }
+
+    // Диалог для отображения raw JSON
+    if (showJsonDialog && message.rawJson != null) {
+        AlertDialog(
+            onDismissRequest = { showJsonDialog = false },
+            title = { Text("Raw JSON") },
+            text = {
+                Text(
+                    text = message.rawJson,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showJsonDialog = false }) {
+                    Text("Закрыть")
+                }
+            }
+        )
     }
 }
 
@@ -214,7 +277,9 @@ fun GreetingPreview() {
     val apiClient = ApiClient()
     val repository = ChatRepositoryImpl(apiClient)
     val sendMessageUseCase = SendMessageUseCase(repository)
-    val store = ChatStoreFactory(storeFactory, sendMessageUseCase, "").create()
+    val getCountryInfoUseCase = GetCountryInfoUseCase(repository)
+    val validateCountryNameUseCase = ValidateCountryNameUseCase(repository)
+    val store = ChatStoreFactory(storeFactory, sendMessageUseCase, getCountryInfoUseCase, validateCountryNameUseCase, "").create()
 
     AIAdventTheme {
         Greeting(store, "Android")

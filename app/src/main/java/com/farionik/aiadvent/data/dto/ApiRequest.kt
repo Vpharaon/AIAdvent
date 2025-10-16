@@ -15,10 +15,17 @@ data class Thinking(
 )
 
 @Serializable
+data class ResponseFormat(
+    val type: String = "json_object"
+)
+
+@Serializable
 data class ApiRequest(
-    val model: String = "glm-4.6",
+    val model: String = "glm-4.5-flash",
     val messages: List<Message>,
     val thinking: Thinking = Thinking(),
+    @SerialName("response_format")
+    val responseFormat: ResponseFormat? = null,
     @SerialName("max_tokens")
     val maxTokens: Int = 4096,
     val temperature: Double = 1.0

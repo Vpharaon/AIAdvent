@@ -15,6 +15,10 @@ import kotlinx.coroutines.withContext
 import com.farionik.aiadvent.data.dto.ApiRequest
 import com.farionik.aiadvent.data.dto.ApiResponse
 import com.farionik.aiadvent.data.dto.Message
+import com.farionik.aiadvent.data.dto.ResponseFormat
+import com.farionik.aiadvent.data.dto.CountryInfo
+import com.farionik.aiadvent.data.dto.ValidationResult
+import com.farionik.aiadvent.data.dto.parseCountryInfo
 
 class ApiClient {
     private val json = Json {
@@ -80,6 +84,122 @@ class ApiClient {
         } catch (e: Exception) {
             Log.e("KtorClient", "Error in sendMessage: ${e.message}", e)
             throw e
+        }
+    }
+
+    /**
+     * Проверяет, является ли введенный текст названием страны
+     * @param text текст для проверки
+     * @param apiKey API ключ
+     * @return true если это страна, false если нет
+     */
+    suspend fun validateCountryName(text: String, apiKey: String): Boolean = withContext(Dispatchers.IO) {
+        val prompt = """
+            Определи, является ли текст "$text" названием реальной страны (на любом языке).
+            Верни JSON с единственным полем "is_country" (boolean).
+            Верни только валидный JSON без дополнительного текста.
+            Примеры:
+            {"is_country": true} - если это страна
+            {"is_country": false} - если это не страна
+        """.trimIndent()
+
+        val request = ApiRequest(
+            messages = listOf(
+                Message(
+                    role = "user",
+                    content = prompt
+                )
+            ),
+            responseFormat = ResponseFormat()
+        )
+
+        try {
+            val response = client.post(API_URL) {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $apiKey")
+                setBody(request)
+            }
+
+            val rawResponse = response.body<String>()
+            Log.d("KtorClient", "Validation response: $rawResponse")
+
+            val apiResponse = json.decodeFromString<ApiResponse>(rawResponse)
+
+            if (apiResponse.error != null) {
+                Log.e("KtorClient", "API Error: ${apiResponse.error.message}")
+                return@withContext false
+            }
+
+            // Парсим ответ
+            val content = apiResponse.choices.firstOrNull()?.message?.content ?: return@withContext false
+            val validationResult = json.decodeFromString<ValidationResult>(content)
+            validationResult.isCountry
+        } catch (e: Exception) {
+            Log.e("KtorClient", "Error in validateCountryName: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Запрашивает информацию о стране в формате JSON
+     * @param countryName название страны
+     * @param apiKey API ключ
+     * @return CountryInfo или null при ошибке
+     */
+    suspend fun getCountryInfo(countryName: String, apiKey: String): CountryInfo? = withContext(Dispatchers.IO) {
+        val prompt = """
+            Предоставь информацию о стране "$countryName" в формате JSON со следующими полями:
+            - country_name: полное название страны
+            - capital: столица
+            - population: население (число)
+            - area: площадь в км² (число с десятичной точкой)
+            - region: регион мира
+            - official_language: официальный язык(и)
+            - currency: валюта
+            - calling_code: телефонный код страны
+            - time_zone: часовой пояс
+            - interesting_facts: список интересных фактов (массив строк)
+
+            Верни только валидный JSON без дополнительного текста.
+        """.trimIndent()
+
+        val request = ApiRequest(
+            messages = listOf(
+                Message(
+                    role = "user",
+                    content = prompt
+                )
+            ),
+            responseFormat = ResponseFormat()
+        )
+
+        try {
+            val response = client.post(API_URL) {
+                contentType(ContentType.Application.Json)
+                header("Authorization", "Bearer $apiKey")
+                setBody(request)
+            }
+
+            Log.d("KtorClient", "Response status: ${response.status}")
+
+            val rawResponse = response.body<String>()
+            Log.d("KtorClient", "Raw JSON response: $rawResponse")
+
+            val apiResponse = json.decodeFromString<ApiResponse>(rawResponse)
+
+            if (apiResponse.error != null) {
+                Log.e("KtorClient", "API Error: ${apiResponse.error.message}")
+                return@withContext null
+            }
+
+            // Парсим CountryInfo из ответа
+            val countryInfo = apiResponse.parseCountryInfo()
+            Log.d("KtorClient", "Parsed CountryInfo: $countryInfo")
+
+            countryInfo
+        } catch (e: Exception) {
+            Log.e("KtorClient", "Error in getCountryInfo: ${e.message}", e)
+            null
         }
     }
 
