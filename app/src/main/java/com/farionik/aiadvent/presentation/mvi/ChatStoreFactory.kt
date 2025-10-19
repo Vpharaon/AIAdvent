@@ -6,15 +6,11 @@ import com.arkivanov.mvikotlin.core.store.StoreFactory
 import com.arkivanov.mvikotlin.extensions.coroutines.CoroutineExecutor
 import com.farionik.aiadvent.domain.model.ChatMessage
 import com.farionik.aiadvent.domain.usecase.SendMessageUseCase
-import com.farionik.aiadvent.domain.usecase.GetCountryInfoUseCase
-import com.farionik.aiadvent.domain.usecase.ValidateCountryNameUseCase
 import kotlinx.coroutines.launch
 
 class ChatStoreFactory(
     private val storeFactory: StoreFactory,
     private val sendMessageUseCase: SendMessageUseCase,
-    private val getCountryInfoUseCase: GetCountryInfoUseCase,
-    private val validateCountryNameUseCase: ValidateCountryNameUseCase,
     private val apiKey: String,
 ) {
 
@@ -30,8 +26,10 @@ class ChatStoreFactory(
         data class InputTextChanged(val text: String) : Message
         data class UserMessageAdded(val message: String) : Message
         data object LoadingStarted : Message
-        data class AiMessageAdded(val response: String, val rawJson: String? = null) : Message
+        data class AiMessageAdded(val chatMessage: ChatMessage) : Message
         data class LoadingFailed(val error: String) : Message
+        data object LastAiMessageRemoved : Message
+        data object ConversationRestarted : Message
     }
 
     private inner class ExecutorImpl : CoroutineExecutor<ChatStore.Intent, Nothing, ChatStore.State, Message, ChatStore.Label>() {
@@ -41,21 +39,31 @@ class ChatStoreFactory(
                     dispatch(Message.InputTextChanged(intent.text))
                 }
                 is ChatStore.Intent.SendMessage -> {
-                    sendMessage(intent.message)
+                    sendMessage(intent.message, getState)
                 }
-                is ChatStore.Intent.GetCountryInfo -> {
-                    getCountryInfo(intent.countryName)
+                is ChatStore.Intent.RetryLastMessage -> {
+                    retryLastMessage(getState)
+                }
+                is ChatStore.Intent.RestartConversation -> {
+                    dispatch(Message.ConversationRestarted)
                 }
             }
         }
 
-        private fun sendMessage(message: String) {
+        private fun sendMessage(message: String, getState: () -> ChatStore.State) {
             dispatch(Message.UserMessageAdded(message))
             scope.launch {
                 dispatch(Message.LoadingStarted)
-                sendMessageUseCase(message, apiKey)
-                    .onSuccess { content ->
-                        dispatch(Message.AiMessageAdded(content))
+
+                // Получаем текущую историю сообщений из state (после добавления сообщения пользователя)
+                val currentState = getState()
+
+                // История уже содержит новое сообщение пользователя, добавленное через dispatch
+                val messageHistory = currentState.messages
+
+                sendMessageUseCase(messageHistory, apiKey)
+                    .onSuccess { chatMessage ->
+                        dispatch(Message.AiMessageAdded(chatMessage))
                     }
                     .onFailure { error ->
                         val errorMessage = "Ошибка: ${error.message}"
@@ -65,50 +73,23 @@ class ChatStoreFactory(
             }
         }
 
-        private fun getCountryInfo(countryName: String) {
-            dispatch(Message.UserMessageAdded("Информация о стране: $countryName"))
+        private fun retryLastMessage(getState: () -> ChatStore.State) {
+            // Удаляем последнее сообщение от AI (с ошибкой парсинга)
+            dispatch(Message.LastAiMessageRemoved)
+
             scope.launch {
                 dispatch(Message.LoadingStarted)
 
-                // Сначала проверяем, является ли введенный текст страной
-                validateCountryNameUseCase(countryName, apiKey)
-                    .onSuccess { isCountry ->
-                        if (isCountry) {
-                            // Если это страна, получаем информацию
-                            getCountryInfoUseCase(countryName, apiKey)
-                                .onSuccess { countryInfo ->
-                                    val response = buildString {
-                                        appendLine("🌍 ${countryInfo.countryName}")
-                                        appendLine("Столица: ${countryInfo.capital}")
-                                        appendLine("Население: ${countryInfo.population}")
-                                        appendLine("Площадь: ${countryInfo.area} км²")
-                                        appendLine("Регион: ${countryInfo.region}")
-                                        appendLine("Язык: ${countryInfo.officialLanguage}")
-                                        appendLine("Валюта: ${countryInfo.currency}")
-                                        appendLine("Код страны: ${countryInfo.callingCode}")
-                                        appendLine("Часовой пояс: ${countryInfo.timeZone}")
-                                        if (countryInfo.interestingFacts.isNotEmpty()) {
-                                            appendLine("\nИнтересные факты:")
-                                            countryInfo.interestingFacts.forEach { fact ->
-                                                appendLine("• $fact")
-                                            }
-                                        }
-                                    }
-                                    dispatch(Message.AiMessageAdded(response, countryInfo.rawJson))
-                                }
-                                .onFailure { error ->
-                                    val errorMessage = "Ошибка получения информации: ${error.message}"
-                                    dispatch(Message.LoadingFailed(errorMessage))
-                                    publish(ChatStore.Label.Error(errorMessage))
-                                }
-                        } else {
-                            // Если это не страна, сообщаем пользователю
-                            val errorMessage = "❌ \"$countryName\" не является названием страны.\n\nПожалуйста, введите правильное название страны (например: Россия, Беларусь, США и т.д.)"
-                            dispatch(Message.LoadingFailed(errorMessage))
-                        }
+                // Получаем текущую историю сообщений (уже без последнего AI сообщения)
+                val currentState = getState()
+                val messageHistory = currentState.messages
+
+                sendMessageUseCase(messageHistory, apiKey)
+                    .onSuccess { chatMessage ->
+                        dispatch(Message.AiMessageAdded(chatMessage))
                     }
                     .onFailure { error ->
-                        val errorMessage = "Ошибка проверки: ${error.message}"
+                        val errorMessage = "Ошибка: ${error.message}"
                         dispatch(Message.LoadingFailed(errorMessage))
                         publish(ChatStore.Label.Error(errorMessage))
                     }
@@ -127,7 +108,7 @@ class ChatStoreFactory(
                 is Message.LoadingStarted -> copy(isLoading = true, error = null)
                 is Message.AiMessageAdded -> copy(
                     isLoading = false,
-                    messages = messages + ChatMessage(text = msg.response, isUser = false, rawJson = msg.rawJson),
+                    messages = messages + msg.chatMessage,
                     error = null
                 )
                 is Message.LoadingFailed -> copy(
@@ -135,6 +116,10 @@ class ChatStoreFactory(
                     messages = messages + ChatMessage(text = msg.error, isUser = false),
                     error = msg.error
                 )
+                is Message.LastAiMessageRemoved -> copy(
+                    messages = messages.dropLast(1)  // Удаляем последнее сообщение
+                )
+                is Message.ConversationRestarted -> ChatStore.State() // Возвращаем начальное состояние
             }
     }
 }

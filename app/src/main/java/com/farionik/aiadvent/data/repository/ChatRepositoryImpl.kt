@@ -1,39 +1,62 @@
 package com.farionik.aiadvent.data.repository
 
-import com.farionik.aiadvent.data.dto.CountryInfo
+import android.util.Log
+import com.farionik.aiadvent.data.dto.ConsultantResponse
+import com.farionik.aiadvent.data.dto.ConsultantResponseRaw
+import com.farionik.aiadvent.data.dto.toConsultantResponse
 import com.farionik.aiadvent.data.network.ApiClient
+import com.farionik.aiadvent.domain.model.ChatMessage
 import com.farionik.aiadvent.domain.repository.ChatRepository
+import kotlinx.serialization.json.Json
 
 class ChatRepositoryImpl(
     private val apiClient: ApiClient,
 ) : ChatRepository {
-    override suspend fun sendMessage(message: String, apiKey: String): Result<String> {
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    override suspend fun sendMessage(messageHistory: List<ChatMessage>, apiKey: String): Result<ChatMessage> {
         return try {
-            val response = apiClient.sendMessage(message, apiKey)
+            val response = apiClient.sendMessage(messageHistory, apiKey)
             val content = response.choices.firstOrNull()?.message?.content ?: "Нет ответа"
-            Result.success(content)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 
-    override suspend fun getCountryInfo(countryName: String, apiKey: String): Result<CountryInfo> {
-        return try {
-            val countryInfo = apiClient.getCountryInfo(countryName, apiKey)
-            if (countryInfo != null) {
-                Result.success(countryInfo)
-            } else {
-                Result.failure(Exception("Не удалось получить информацию о стране"))
+            // Пытаемся распарсить JSON ответ
+            var isParsingError = false
+            val consultantResponse = try {
+                // Сначала пробуем обычный парсинг
+                try {
+                    json.decodeFromString<ConsultantResponse>(content)
+                } catch (e: Exception) {
+                    // Если не удалось, используем гибкий парсинг с JsonElement
+                    Log.w("ChatRepository", "Обычный парсинг не сработал, использую гибкий парсинг...")
+                    val rawResponse = json.decodeFromString<ConsultantResponseRaw>(content)
+                    rawResponse.toConsultantResponse()
+                }
+            } catch (e: Exception) {
+                // Если даже гибкий парсинг не помог, помечаем как ошибку и логируем
+                isParsingError = true
+                Log.e("ChatRepository", "========================================")
+                Log.e("ChatRepository", "ОШИБКА ПАРСИНГА JSON")
+                Log.e("ChatRepository", "========================================")
+                Log.e("ChatRepository", "Причина: ${e.message}")
+                Log.e("ChatRepository", "Полученный JSON:")
+                Log.e("ChatRepository", content)
+                Log.e("ChatRepository", "========================================")
+                ConsultantResponse(message = content, options = null)
             }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 
-    override suspend fun validateCountryName(text: String, apiKey: String): Result<Boolean> {
-        return try {
-            val isValid = apiClient.validateCountryName(text, apiKey)
-            Result.success(isValid)
+            val chatMessage = ChatMessage(
+                text = consultantResponse.message,
+                isUser = false,
+                rawJson = content,
+                options = consultantResponse.options,
+                isParsingError = isParsingError
+            )
+
+            Result.success(chatMessage)
         } catch (e: Exception) {
             Result.failure(e)
         }

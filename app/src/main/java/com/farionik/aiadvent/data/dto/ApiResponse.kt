@@ -2,7 +2,6 @@ package com.farionik.aiadvent.data.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 @Serializable
 data class ResponseMessage(
@@ -56,21 +55,3 @@ data class ErrorResponse(
     val type: String = "",
     val code: String? = null
 )
-
-/**
- * Extension функция для парсинга CountryInfo из JSON ответа
- */
-fun ApiResponse.parseCountryInfo(): CountryInfo? {
-    return try {
-        val content = choices.firstOrNull()?.message?.content ?: return null
-        val countryInfo = Json {
-            ignoreUnknownKeys = true
-            isLenient = true
-            coerceInputValues = true
-        }.decodeFromString<CountryInfo>(content)
-        // Сохраняем raw JSON для отображения
-        countryInfo.copy(rawJson = content)
-    } catch (e: Exception) {
-        null
-    }
-}

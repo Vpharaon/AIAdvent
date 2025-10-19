@@ -16,12 +16,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,26 +33,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.arkivanov.mvikotlin.core.store.StoreFactory
-import com.arkivanov.mvikotlin.main.store.DefaultStoreFactory
 import com.arkivanov.mvikotlin.extensions.coroutines.states
-import androidx.compose.runtime.collectAsState
+import com.arkivanov.mvikotlin.main.store.DefaultStoreFactory
 import com.farionik.aiadvent.BuildConfig
 import com.farionik.aiadvent.data.network.ApiClient
 import com.farionik.aiadvent.data.repository.ChatRepositoryImpl
 import com.farionik.aiadvent.domain.model.ChatMessage
 import com.farionik.aiadvent.domain.usecase.SendMessageUseCase
-import com.farionik.aiadvent.domain.usecase.GetCountryInfoUseCase
-import com.farionik.aiadvent.domain.usecase.ValidateCountryNameUseCase
 import com.farionik.aiadvent.presentation.mvi.ChatStore
 import com.farionik.aiadvent.presentation.mvi.ChatStoreFactory
 import com.farionik.aiadvent.presentation.theme.AIAdventTheme
@@ -63,14 +56,10 @@ class MainActivity : ComponentActivity() {
     private val apiClient = ApiClient()
     private val repository = ChatRepositoryImpl(apiClient)
     private val sendMessageUseCase = SendMessageUseCase(repository)
-    private val getCountryInfoUseCase = GetCountryInfoUseCase(repository)
-    private val validateCountryNameUseCase = ValidateCountryNameUseCase(repository)
     private val storeFactory: StoreFactory = DefaultStoreFactory()
     private val store: ChatStore = ChatStoreFactory(
         storeFactory,
         sendMessageUseCase,
-        getCountryInfoUseCase,
-        validateCountryNameUseCase,
         BuildConfig.API_KEY
     ).create()
 
@@ -133,7 +122,7 @@ fun ChatScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(Color(0xFFE3F2FD)) // Светло-голубой фон для чата
+                .background(Color(0xFFF5F5F5)) // Нежный серо-бежевый фон для чата
         ) {
             LazyColumn(
                 state = listState,
@@ -142,7 +131,17 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(state.messages) { message ->
-                    ChatMessageItem(message = message)
+                    ChatMessageItem(
+                        message = message,
+                        onOptionSelected = { selectedOption ->
+                            // Отправляем выбранный вариант как сообщение пользователя
+                            onIntent(ChatStore.Intent.SendMessage(selectedOption))
+                        },
+                        onRetry = {
+                            // Повторяем последний запрос
+                            onIntent(ChatStore.Intent.RetryLastMessage)
+                        }
+                    )
                 }
 
                 // Индикатор загрузки
@@ -156,6 +155,39 @@ fun ChatScreen(
                                 modifier = Modifier.padding(8.dp)
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        // Кнопка "Начать сначала" - показываем только после того, как показаны модели телефонов
+        // Минимум 15 сообщений: приветствие + 7 вопросов AI + 6 ответов пользователя + модели
+        // (приветствие содержит первый вопрос о бюджете)
+        if (state.messages.size >= 15 && !state.isLoading) {
+            Surface(
+                shadowElevation = 4.dp,
+                color = Color(0xFFF0F4F8)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    TextButton(
+                        onClick = { onIntent(ChatStore.Intent.RestartConversation) },
+                        enabled = !state.isLoading
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Начать сначала",
+                            tint = Color(0xFF7FA1C3),
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                        Text(
+                            text = "Начать выбор сначала",
+                            color = Color(0xFF5A7BA6)
+                        )
                     }
                 }
             }
@@ -183,7 +215,7 @@ fun ChatScreen(
                 )
 
                 IconButton(
-                    onClick = { onIntent(ChatStore.Intent.GetCountryInfo(state.inputText)) },
+                    onClick = { onIntent(ChatStore.Intent.SendMessage(state.inputText)) },
                     enabled = state.inputText.isNotBlank() && !state.isLoading
                 ) {
                     Icon(
@@ -197,16 +229,18 @@ fun ChatScreen(
 }
 
 @Composable
-fun ChatMessageItem(message: ChatMessage) {
-    var showJsonDialog by remember { mutableStateOf(false) }
-
+fun ChatMessageItem(
+    message: ChatMessage,
+    onOptionSelected: (String) -> Unit = {},
+    onRetry: () -> Unit = {}
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isUser) Arrangement.End else Arrangement.Start
     ) {
         Card(
             modifier = Modifier
-                .widthIn(max = 300.dp),
+                .widthIn(max = if (message.options != null) 350.dp else 300.dp),
             shape = RoundedCornerShape(
                 topStart = 16.dp,
                 topEnd = 16.dp,
@@ -215,58 +249,104 @@ fun ChatMessageItem(message: ChatMessage) {
             ),
             colors = CardDefaults.cardColors(
                 containerColor = if (message.isUser) {
-                    Color(0xFF4A90E2) // Приятный синий для пользователя
+                    Color(0xFFB8D4E8) // Пастельный голубой для пользователя
                 } else {
-                    Color(0xFFF5F5F5) // Светло-серый фон для AI
+                    Color(0xFFFFFFFF) // Белый фон для AI
                 }
             )
         ) {
             Column(
                 modifier = Modifier.padding(12.dp)
             ) {
-                Text(
-                    text = message.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (message.isUser) {
-                        Color.White // Белый текст на синем фоне
-                    } else {
-                        Color(0xFF212121) // Почти черный текст для читаемости
-                    }
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        text = message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (message.isUser) {
+                            Color(0xFF2C3E50) // Темно-серый текст на пастельном фоне
+                        } else {
+                            Color(0xFF2C3E50) // Темно-серый текст для читаемости
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
 
-                // Кнопка просмотра JSON (только для сообщений с rawJson)
-                if (!message.isUser && message.rawJson != null) {
-                    TextButton(
-                        onClick = { showJsonDialog = true },
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Text("{ } Посмотреть JSON")
+                    // Кнопка refresh для сообщений с ошибкой парсинга
+                    if (!message.isUser && message.isParsingError) {
+                        IconButton(onClick = onRetry) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Повторить запрос",
+                                tint = Color(0xFF7FA1C3) // Пастельный синий
+                            )
+                        }
+                    }
+                }
+
+
+                // Отображение вариантов ответа
+                if (!message.isUser && message.options != null) {
+                    message.options.forEach { option ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFFF0F4F8) // Нежный серо-голубой
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                            onClick = { onOptionSelected(option.title) }
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = option.title,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color(0xFF5A7BA6), // Мягкий синий
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+
+                                if (option.pros.isNotEmpty()) {
+                                    Text(
+                                        text = "✅ Плюсы:",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFF6AAF73), // Пастельный зеленый
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                    option.pros.forEach { pro ->
+                                        Text(
+                                            text = "• $pro",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF5A6C7D), // Мягкий серо-синий
+                                            modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                if (option.cons.isNotEmpty()) {
+                                    Text(
+                                        text = "❌ Минусы:",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color(0xFFE07A7A), // Пастельный красный
+                                        modifier = Modifier.padding(top = 6.dp)
+                                    )
+                                    option.cons.forEach { con ->
+                                        Text(
+                                            text = "• $con",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF5A6C7D), // Мягкий серо-синий
+                                            modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-    }
-
-    // Диалог для отображения raw JSON
-    if (showJsonDialog && message.rawJson != null) {
-        AlertDialog(
-            onDismissRequest = { showJsonDialog = false },
-            title = { Text("Raw JSON") },
-            text = {
-                Text(
-                    text = message.rawJson,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    style = MaterialTheme.typography.bodySmall
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { showJsonDialog = false }) {
-                    Text("Закрыть")
-                }
-            }
-        )
     }
 }
 
@@ -277,9 +357,7 @@ fun GreetingPreview() {
     val apiClient = ApiClient()
     val repository = ChatRepositoryImpl(apiClient)
     val sendMessageUseCase = SendMessageUseCase(repository)
-    val getCountryInfoUseCase = GetCountryInfoUseCase(repository)
-    val validateCountryNameUseCase = ValidateCountryNameUseCase(repository)
-    val store = ChatStoreFactory(storeFactory, sendMessageUseCase, getCountryInfoUseCase, validateCountryNameUseCase, "").create()
+    val store = ChatStoreFactory(storeFactory, sendMessageUseCase, "").create()
 
     AIAdventTheme {
         Greeting(store, "Android")

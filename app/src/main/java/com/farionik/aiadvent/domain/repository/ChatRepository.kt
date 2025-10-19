@@ -1,9 +1,7 @@
 package com.farionik.aiadvent.domain.repository
 
-import com.farionik.aiadvent.data.dto.CountryInfo
+import com.farionik.aiadvent.domain.model.ChatMessage
 
 interface ChatRepository {
-    suspend fun sendMessage(message: String, apiKey: String): Result<String>
-    suspend fun getCountryInfo(countryName: String, apiKey: String): Result<CountryInfo>
-    suspend fun validateCountryName(text: String, apiKey: String): Result<Boolean>
+    suspend fun sendMessage(messageHistory: List<ChatMessage>, apiKey: String): Result<ChatMessage>
 }
