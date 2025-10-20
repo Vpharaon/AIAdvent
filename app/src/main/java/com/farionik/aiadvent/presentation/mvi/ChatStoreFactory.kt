@@ -24,12 +24,11 @@ class ChatStoreFactory(
 
     private sealed interface Message {
         data class InputTextChanged(val text: String) : Message
+        data class TemperatureChanged(val temperature: Float) : Message
         data class UserMessageAdded(val message: String) : Message
         data object LoadingStarted : Message
         data class AiMessageAdded(val chatMessage: ChatMessage) : Message
         data class LoadingFailed(val error: String) : Message
-        data object LastAiMessageRemoved : Message
-        data object ConversationRestarted : Message
     }
 
     private inner class ExecutorImpl : CoroutineExecutor<ChatStore.Intent, Nothing, ChatStore.State, Message, ChatStore.Label>() {
@@ -38,14 +37,11 @@ class ChatStoreFactory(
                 is ChatStore.Intent.UpdateInputText -> {
                     dispatch(Message.InputTextChanged(intent.text))
                 }
+                is ChatStore.Intent.UpdateTemperature -> {
+                    dispatch(Message.TemperatureChanged(intent.temperature))
+                }
                 is ChatStore.Intent.SendMessage -> {
                     sendMessage(intent.message, getState)
-                }
-                is ChatStore.Intent.RetryLastMessage -> {
-                    retryLastMessage(getState)
-                }
-                is ChatStore.Intent.RestartConversation -> {
-                    dispatch(Message.ConversationRestarted)
                 }
             }
         }
@@ -55,36 +51,10 @@ class ChatStoreFactory(
             scope.launch {
                 dispatch(Message.LoadingStarted)
 
-                // Получаем текущую историю сообщений из state (после добавления сообщения пользователя)
                 val currentState = getState()
+                val temperature = currentState.temperature
 
-                // История уже содержит новое сообщение пользователя, добавленное через dispatch
-                val messageHistory = currentState.messages
-
-                sendMessageUseCase(messageHistory, apiKey)
-                    .onSuccess { chatMessage ->
-                        dispatch(Message.AiMessageAdded(chatMessage))
-                    }
-                    .onFailure { error ->
-                        val errorMessage = "Ошибка: ${error.message}"
-                        dispatch(Message.LoadingFailed(errorMessage))
-                        publish(ChatStore.Label.Error(errorMessage))
-                    }
-            }
-        }
-
-        private fun retryLastMessage(getState: () -> ChatStore.State) {
-            // Удаляем последнее сообщение от AI (с ошибкой парсинга)
-            dispatch(Message.LastAiMessageRemoved)
-
-            scope.launch {
-                dispatch(Message.LoadingStarted)
-
-                // Получаем текущую историю сообщений (уже без последнего AI сообщения)
-                val currentState = getState()
-                val messageHistory = currentState.messages
-
-                sendMessageUseCase(messageHistory, apiKey)
+                sendMessageUseCase(message, apiKey, temperature)
                     .onSuccess { chatMessage ->
                         dispatch(Message.AiMessageAdded(chatMessage))
                     }
@@ -101,9 +71,10 @@ class ChatStoreFactory(
         override fun ChatStore.State.reduce(msg: Message): ChatStore.State =
             when (msg) {
                 is Message.InputTextChanged -> copy(inputText = msg.text)
+                is Message.TemperatureChanged -> copy(temperature = msg.temperature)
                 is Message.UserMessageAdded -> copy(
                     messages = messages + ChatMessage(text = msg.message, isUser = true),
-                    inputText = "" // Очищаем поле ввода
+                    inputText = ""
                 )
                 is Message.LoadingStarted -> copy(isLoading = true, error = null)
                 is Message.AiMessageAdded -> copy(
@@ -116,10 +87,6 @@ class ChatStoreFactory(
                     messages = messages + ChatMessage(text = msg.error, isUser = false),
                     error = msg.error
                 )
-                is Message.LastAiMessageRemoved -> copy(
-                    messages = messages.dropLast(1)  // Удаляем последнее сообщение
-                )
-                is Message.ConversationRestarted -> ChatStore.State() // Возвращаем начальное состояние
             }
     }
 }

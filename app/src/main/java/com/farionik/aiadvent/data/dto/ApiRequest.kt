@@ -11,7 +11,7 @@ data class Message(
 
 @Serializable
 data class Thinking(
-    val type: String = "enabled"
+    val type: String = "disabled"
 )
 
 @Serializable
@@ -28,5 +28,5 @@ data class ApiRequest(
     val responseFormat: ResponseFormat? = null,
     @SerialName("max_tokens")
     val maxTokens: Int = 4096,
-    val temperature: Double = 1.0
+    val temperature: Double = 0.0
 )

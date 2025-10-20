@@ -6,7 +6,7 @@ import com.farionik.aiadvent.domain.repository.ChatRepository
 class SendMessageUseCase(
     private val repository: ChatRepository
 ) {
-    suspend operator fun invoke(messageHistory: List<ChatMessage>, apiKey: String): Result<ChatMessage> {
-        return repository.sendMessage(messageHistory, apiKey)
+    suspend operator fun invoke(userMessage: String, apiKey: String, temperature: Float): Result<ChatMessage> {
+        return repository.sendMessage(userMessage, apiKey, temperature)
     }
 }

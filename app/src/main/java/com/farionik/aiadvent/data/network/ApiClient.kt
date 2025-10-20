@@ -15,9 +15,6 @@ import kotlinx.coroutines.withContext
 import com.farionik.aiadvent.data.dto.ApiRequest
 import com.farionik.aiadvent.data.dto.ApiResponse
 import com.farionik.aiadvent.data.dto.Message
-import com.farionik.aiadvent.data.dto.ResponseFormat
-import com.farionik.aiadvent.domain.model.SystemPrompts
-import com.farionik.aiadvent.domain.model.ChatMessage
 
 class ApiClient {
     private val json = Json {
@@ -46,39 +43,19 @@ class ApiClient {
         const val API_URL = "https://api.z.ai/api/paas/v4/chat/completions"
     }
 
-    suspend fun sendMessage(messageHistory: List<ChatMessage>, apiKey: String): ApiResponse = withContext(Dispatchers.IO) {
-        // Формируем список сообщений для API
-        val messages = mutableListOf<Message>()
-
-        // 1. Добавляем системный промпт
-        messages.add(
+    suspend fun sendMessage(userMessage: String, apiKey: String, temperature: Float): ApiResponse = withContext(Dispatchers.IO) {
+        // Отправляем только текущее сообщение пользователя
+        val messages = listOf(
             Message(
-                role = "system",
-                content = SystemPrompts.SALES_CONSULTANT
+                role = "user",
+                content = userMessage
             )
         )
 
-        // 2. Добавляем всю историю сообщений (исключая начальное приветствие)
-        messageHistory.forEachIndexed { index, chatMessage ->
-            // Пропускаем первое сообщение (начальное приветствие)
-            if (index == 0) return@forEachIndexed
-
-            messages.add(
-                Message(
-                    role = if (chatMessage.isUser) "user" else "assistant",
-                    content = if (chatMessage.isUser) {
-                        chatMessage.text
-                    } else {
-                        // Для ассистента используем rawJson если есть, иначе text
-                        chatMessage.rawJson ?: chatMessage.text
-                    }
-                )
-            )
-        }
-
         val request = ApiRequest(
             messages = messages,
-            responseFormat = ResponseFormat(type = "json_object")
+            responseFormat = null,
+            temperature = temperature.toDouble()
         )
 
         try {
